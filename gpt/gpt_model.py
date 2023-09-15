@@ -7,7 +7,7 @@ import time
 from tqdm import tqdm
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-dict_datas = json.load(open('./datas/dict_datas.json', 'r'))
+dict_datas = json.load(open('./gpt/datas/dict_datas.json', 'r'))
 word2id, id2word = dict_datas['word2id'], dict_datas['id2word']
 vocab_size = len(word2id)
 max_pos = 1800

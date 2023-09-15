@@ -11,7 +11,7 @@ def make_data(datas):
     train_datas =[]
     for data in datas:
         data=data.strip()
-        train_data = [i if i!='\t' else "<sep>" for i in data]+['<sep>']
+        train_data = ['<bos>']+[i if i!='\t' else "<sep>" for i in data]+['<eos>']
         train_datas.append(train_data)
 
     return train_datas
@@ -122,7 +122,7 @@ def print_num_parameters(model):
     print(f'{total_trainable_params:,} training parameters.')
 
 if __name__ == '__main__':
-    with open('./datas/dataset.txt', 'r', encoding='utf-8') as f:
+    with open('./gpt/datas/dataset.txt', 'r', encoding='utf-8') as f:
         datas = f.readlines()
 
     train_data = make_data(datas)

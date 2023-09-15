@@ -77,7 +77,7 @@ class PositionWiseFeedForwardNetwork(nn.Module):
     前馈神经网络
     """
     def __init__(self, d_model,d_ff):
-        self.super(PositionWiseFeedForwardNetwork, self).__init__()
+        super(PositionWiseFeedForwardNetwork, self).__init__()
         self.linear1 = nn.Linear(d_model, d_ff)
         self.gelu = nn.GELU()
         self.linear2 = nn.Linear(d_ff, d_model)
@@ -102,6 +102,8 @@ class DecodeLayer(nn.Module):
 
     
     def forward(self, input, attn_mask):
+        # |inputs| : (batch_size, seq_len, d_model)
+        # |attn_mask| : (batch_size, seq_len, seq_len)
         attn, attn_weight = self.mha(input, input, input, attn_mask)
         attn = self.dropout1(attn)
         attn = self.layernorm1(attn+input)  # attention部分
@@ -120,9 +122,8 @@ class TransformerDecoder(nn.Module):
         self.pad_id = pad_id
 
         self.embedding = nn.Embedding(vocab_size, d_model)  # 单词编码
-        self.pos_embedding = nn.Embedding(seq_len+1, d_model)
-        self.layer = nn.modules([DecodeLayer(d_model, n_heads, d_ff, attn_pdorp, resid_pdrop) 
-                                 for _ in range(n_layers)])
+        self.pos_embedding = nn.Embedding(seq_len+1, d_model) # 位置的数量+pad_id
+        self.layer = nn.ModuleList([DecodeLayer(d_model, n_heads, d_ff, attn_pdorp, resid_pdrop) for _ in range(n_layers)])
         self.dropout = nn.Dropout(embd_pdrop)
         nn.init.normal_(self.embedding.weight, std=0.02)
 
@@ -131,11 +132,95 @@ class TransformerDecoder(nn.Module):
         # |inputs| : (batch_size, seq_len)
         
         # 先做position embedding, 已经padding成相同长度了，只用转换为true，false
-        positions = torch.arange(input.size(1), device=input.device, dtype=torch.long).repeat(input.size(0), 1)+1
-        positions_pad_mask = positions.eq(self.pad_id)
+        positions = torch.arange(inputs.size(1), device=inputs.device, dtype=torch.long).repeat(inputs.size(0), 1)+1
+        positions_pad_mask = inputs.eq(self.pad_id)
         positions.masked_fill_(positions_pad_mask, 0)
         # |positions| : (batch_size, seq_len)
+        output = self.dropout(self.embedding(inputs)+self.pos_embedding(positions))
+        
+        attn_pad_mask = self.get_attention_padding_mask(inputs, inputs, self.pad_id)
+        sub_mask = self.get_attention_subsequent_mask(inputs).to(device=attn_pad_mask.device)
 
+        # 把上矩阵和pading的部分都mask
+        att_mask = torch.gt((attn_pad_mask+sub_mask), 0)
+        
+        attn_weights = []
+        for layer in self.layer:
+            output, attn_weight = layer(output, att_mask)
+            attn_weights.append(attn_weight)
+        return output, attn_weights
+
+
+    
+    def get_attention_padding_mask(self, q, k, pad_id):
+        # |q, k| : (batch_size, seq_len)
+        """
+        掩码, pad的词看不见
+        """
+        attn_pad_mask = k.eq(pad_id).unsqueeze(1).repeat(1, q.size(1), 1)
+        # |attn_pad_mask| : (batch_size, q_len, k_len)
+        return attn_pad_mask
+    
+
+    def get_attention_subsequent_mask(self, q):
+        """
+        看不到后面的词
+        """
+        bs, q_len = q.size()
+        subsequent_mask = torch.ones(bs, q_len, q_len).triu(diagonal=1)
+        # |subsequent_mask| : (batch_size, q_len, q_len)
+        return subsequent_mask
+
+
+class GPT(nn.Module):
+    def __init__(self,
+                vocab_size, 
+                seq_len, 
+                n_layers=5, 
+                embd_pdrop=0.5, 
+                pad_id=0,
+                d_model=512, 
+                n_heads=16, 
+                d_ff=512, 
+                attn_pdorp=0.5, 
+                resid_pdrop=0.5):
+        super(GPT, self).__init__()
+        self.d_model = d_model
+        self.vocab_size = vocab_size
+
+        self.decoder = TransformerDecoder(vocab_size, seq_len, n_layers, embd_pdrop, pad_id,
+                d_model, n_heads, d_ff, attn_pdorp, resid_pdrop)
+        
+    
+    def forward(self, inputs):
+        # |input| : (batch_size, seq_len)
+        output, attn_weight = self.decoder(inputs)
+        # |output| : (batch_size, seq_len, d_model)
+
+        return output
+    
+
+class GPTPretrain(nn.Module):
+    def __init__(self,gpt):
+        super(GPTPretrain, self).__init__()
+        self.d_model =  gpt.d_model
+        self.vocab_size = gpt.vocab_size
+        self.gpt = gpt
+
+        self.fc = nn.Linear(self.d_model, self.vocab_size, bias=False)
+        # self.fc.weight = gpt.decoder.embedding.weight
+
+    
+    def forward(self, inputs):
+        # |input| : (batch_size, seq_len)
+        output = self.gpt(inputs)
+        output = self.fc(output)
+        # |output| : (batch_size, seq_len, vocab_size)
+
+        return output
+
+
+        
 
 
 
